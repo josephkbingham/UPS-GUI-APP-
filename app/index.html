@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#171b19" />
+    <title>UPS Console</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./ui.js"></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>UPS Console
+      </div>
+      <div class="top-actions">
+        <span id="connection-state" class="badge" role="status"
+          ><i class="dot"></i><span>Disconnected</span></span
+        >
+        <button id="demo" class="quiet">Try demo</button>
+        <button id="connect" class="primary">Connect UPS</button>
+      </div>
+    </header>
+    <main>
+      <div class="page-heading">
+        <div>
+          <h1>Power overview</h1>
+          <p id="unit-label">No UPS connected</p>
+        </div>
+        <form id="refresh-form" class="refresh-control">
+          <label for="refresh">Refresh every</label
+          ><input id="refresh" type="number" min="1" step="1" value="2" required /><span>sec</span>
+        </form>
+      </div>
+      <div id="message" class="message" role="status" hidden></div>
+      <button id="alarm-banner" class="alarm-banner" hidden></button>
+      <section class="overview" aria-label="UPS overview">
+        <article id="state-card" class="metric state-card">
+          <div class="state-copy">
+            <h2>UPS state</h2>
+            <strong id="source">Awaiting data</strong><small id="source-note">Reported output source</small>
+          </div>
+          <span class="source-orbit" aria-hidden="true"><i></i></span>
+        </article>
+        <article class="metric" data-group="ST3">
+          <h2>Output load</h2>
+          <div class="metric-number"><b id="load">—</b><span>%</span></div>
+          <canvas id="load-trend" aria-label="Recent output load" role="img"></canvas>
+        </article>
+        <article class="metric" data-group="ST1">
+          <h2>Battery charge</h2>
+          <div class="metric-number"><b id="charge">—</b><span>%</span></div>
+          <div class="charge-track" aria-hidden="true"><i id="charge-fill"></i></div>
+        </article>
+        <article class="metric" data-group="ST1">
+          <h2>Runtime estimate</h2>
+          <div class="metric-number"><b id="runtime">—</b><span>min</span></div>
+          <small>Remaining on battery</small>
+        </article>
+      </section>
+      <div class="workspace" id="workspace">
+        <section class="panel telemetry" aria-labelledby="telemetry-title">
+          <header class="panel-title">
+            <h2 id="telemetry-title"><span class="wave-icon" aria-hidden="true">∿</span>Telemetry</h2>
+            <small id="last-sample">Awaiting readings</small>
+          </header>
+          <div class="tabs" role="tablist" aria-label="Telemetry view">
+            <button id="tab-power" role="tab" aria-selected="true" aria-controls="readings" data-view="power">
+              Electrical
+            </button>
+            <button
+              id="tab-battery"
+              role="tab"
+              aria-selected="false"
+              aria-controls="readings"
+              data-view="battery"
+            >
+              Battery
+            </button>
+            <button
+              id="tab-alarms"
+              role="tab"
+              aria-selected="false"
+              aria-controls="readings"
+              data-view="alarms"
+            >
+              Alarms <span id="alarm-count"></span>
+            </button>
+          </div>
+          <div id="readings" class="readings" role="tabpanel" aria-labelledby="tab-power"></div>
+        </section>
+        <div
+          id="splitter"
+          class="splitter"
+          role="separator"
+          aria-label="Resize telemetry and console"
+          aria-orientation="vertical"
+          aria-valuemin="32"
+          aria-valuemax="65"
+          aria-valuenow="44"
+          tabindex="0"
+        ></div>
+        <section class="panel console" aria-labelledby="console-title">
+          <header class="panel-title">
+            <h2 id="console-title"><span class="terminal-icon" aria-hidden="true">›_</span>Serial console</h2>
+            <button id="clear" class="small-button">Clear</button>
+          </header>
+          <div class="log-toolbar">
+            <div class="segment" aria-label="Traffic filter">
+              <button id="all-traffic" aria-pressed="true">All traffic</button
+              ><button id="manual-traffic" aria-pressed="false">Manual</button>
+            </div>
+            <label class="follow"><input id="follow" type="checkbox" checked /> Follow</label>
+          </div>
+          <div id="log" class="log" tabindex="0" aria-label="Serial traffic log">
+            <div class="log-empty">
+              <span aria-hidden="true">›_</span><b>Waiting for serial traffic</b
+              ><small>Transmitted commands and UPS replies appear here.</small>
+            </div>
+          </div>
+          <div class="composer">
+            <div class="command-options">
+              <label
+                >Protocol
+                <select id="mode" aria-label="Protocol">
+                  <option value="frame">Framed</option>
+                  <option value="text">Britecom</option>
+                </select></label
+              >
+              <label id="target-label" hidden
+                >Board
+                <select id="target" aria-label="Board">
+                  <option value="1">Master</option>
+                  <option value="2">Slave</option>
+                </select></label
+              >
+              <span id="mode-note"></span>
+            </div>
+            <div id="prompt" class="device-prompt" hidden></div>
+            <form id="command-form" autocomplete="off">
+              <div id="suggestions" role="listbox" aria-label="Command suggestions" hidden></div>
+              <span class="prompt-mark" aria-hidden="true">›</span>
+              <input
+                id="command"
+                role="combobox"
+                aria-label="Serial command"
+                aria-autocomplete="list"
+                aria-expanded="false"
+                aria-controls="suggestions"
+                spellcheck="false"
+                placeholder="Type a command…"
+                maxlength="150"
+              />
+              <button id="send" type="submit" disabled>Send <span aria-hidden="true">↵</span></button>
+            </form>
+            <div class="command-help">
+              <span id="command-error" role="status"></span
+              ><span><kbd>Tab</kbd> complete <kbd>Enter</kbd> send</span>
+            </div>
+          </div>
+        </section>
+      </div>
+      <footer>
+        <span id="port-label">Serial port closed</span><span id="poll-label">Refresh interval · 2 s</span>
+      </footer>
+    </main>
+    <dialog id="connection-dialog" aria-labelledby="connection-title">
+      <div class="dialog-head">
+        <h2 id="connection-title">Connect to UPS</h2>
+        <button id="dismiss" aria-label="Close connection settings">×</button>
+      </div>
+      <p>Choose the firmware profile for the connected serial adapter.</p>
+      <label for="profile">Board profile</label
+      ><select id="profile">
+        <option value="model">FA10273 · Model F (SNMP serial)</option>
+        <option value="upsilon">Model F · UPSilon serial</option>
+        <option value="dual">FA10642 · Dual-board router</option>
+      </select>
+      <label for="baud">Baud rate</label
+      ><select id="baud">
+        <option>1200</option>
+        <option>2400</option>
+        <option>4800</option>
+        <option selected>9600</option>
+      </select>
+      <small>8 data bits · No parity · 1 stop bit · No flow control</small>
+      <label id="recover-label" class="check-label" hidden
+        ><input id="recover" type="checkbox" /> Restore an interrupted text session on this router</label
+      >
+      <p id="dialog-error" role="status"></p>
+      <div class="dialog-actions">
+        <button id="dialog-demo" class="quiet">Start demo</button
+        ><button id="select-port" class="primary">Choose serial port</button>
+      </div>
+    </dialog>
+  </body>
+</html>

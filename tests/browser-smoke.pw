@@ -1,0 +1,88 @@
+async page => {
+  // Install a virtual serial adapter in this test page before application code runs.
+  // No system port is requested by this check.
+  await page.addInitScript(() => {
+    const probe = { writes: [], openings: [], closes: 0 };
+    window.upsTestPeer = probe;
+    const port = {
+      async open(options) {
+        probe.openings.push(options);
+        const { DemoLink } = await import(new URL("./demo.js", location.href).href);
+        const peer = new DemoLink("dual", { latency: 8 });
+        this.readable = new ReadableStream({
+          start(controller) { peer.start(bytes => controller.enqueue(bytes)); },
+          cancel() { return peer.close(); }
+        });
+        this.writable = new WritableStream({
+          write(bytes) {
+            const wire = new TextDecoder().decode(bytes);
+            probe.writes.push({ wire, at:performance.now() });
+            return peer.write(wire);
+          }
+        });
+      },
+      async close() {
+        if (this.readable.locked || this.writable.locked) throw Error("Stream still locked at close");
+        probe.closes++;
+      }
+    };
+    Object.defineProperty(navigator,"serial",{configurable:true,value:{async requestPort(){ return port; }}});
+  });
+  await page.reload();
+  const check = (flag, message) => { if (!flag) throw Error(message); };
+  const errors = [];
+  page.on("pageerror",e => errors.push(e.message));
+  const button = name => page.getByRole("button",{name,exact:true});
+  const refresh = page.getByRole("spinbutton",{name:"Refresh every"});
+  const cmd = page.getByRole("combobox",{name:"Serial command"});
+  await refresh.fill("2"); await refresh.press("Enter");
+  await button("Connect UPS").click();
+  await page.getByLabel("Board profile").selectOption("dual");
+  await button("Choose serial port").click();
+  await page.waitForFunction(() => document.querySelector("#source").textContent === "On utility");
+  await page.waitForFunction(() => window.upsTestPeer.writes.filter(x=>x.wire==="^P003ST3").length >= 2);
+  const observed = await page.evaluate(() => {
+    const times = window.upsTestPeer.writes.filter(x=>x.wire==="^P003ST3").map(x=>x.at);
+    return { interval:times[1]-times[0], options:window.upsTestPeer.openings[0] };
+  });
+  check(observed.interval > 1400 && observed.interval < 3000,"Expected a two-second polling cadence");
+  check(observed.options.baudRate===9600 && observed.options.dataBits===8 && observed.options.flowControl==="none","Serial settings mismatch");
+  await refresh.fill("5"); await refresh.press("Enter");
+  const start = await page.evaluate(() => performance.now());
+  await page.waitForFunction(s => window.upsTestPeer.writes.filter(x=>x.wire==="^P003ST3" && x.at>s).length>=2,start,{timeout:16000});
+  const updated = await page.evaluate(s => {
+    const samples = window.upsTestPeer.writes.filter(x=>x.wire==="^P003ST3" && x.at>s);
+    return samples[1].at-samples[0].at;
+  }, start);
+  check(updated>4400 && updated<6200,"Expected the new five-second polling cadence");
+  await button("Manual").click();
+  await cmd.fill("MO"); await cmd.press("Tab");
+  check(await cmd.inputValue()==="MOD","Tab must complete MOD");
+  check(await page.locator("#log .log-row[data-dir=TX]").count()===0,"Completion transmitted bytes");
+  await cmd.press("Enter");
+  await page.waitForFunction(()=>document.querySelector("#log").textContent.includes("^D0045000"));
+  await cmd.fill("SET PSD"); await cmd.press("Enter");
+  await page.waitForFunction(()=>document.querySelector("#command-error").textContent.includes("whole number"));
+  check(await page.evaluate(()=>!window.upsTestPeer.writes.some(x=>x.wire.startsWith("^S"))),"Invalid SET transmitted");
+  await cmd.fill("SET UID 9"); await cmd.press("Enter");
+  await page.waitForFunction(()=>document.querySelector("#log").textContent.includes("Accepted"));
+  await page.getByLabel("Protocol",{exact:true}).selectOption("text");
+  await page.getByLabel("Board",{exact:true}).selectOption("2");
+  await cmd.fill("u"); await cmd.press("Enter");
+  await button("n").click();
+  await page.waitForFunction(()=>document.querySelector("#connection-state").textContent==="Connected");
+  const wires = await page.evaluate(()=>window.upsTestPeer.writes.map(x=>x.wire));
+  const route = wires.indexOf("^X");
+  check(JSON.stringify(wires.slice(route,route+8))===JSON.stringify(["^X","2","^X\r","u","n\r","0","^P003AP1","^P003ST3"]),"Router pass-through exchange mismatch");
+  await page.getByRole("tab",{name:"Battery",exact:true}).click();
+  await page.getByRole("columnheader",{name:"Slave"}).waitFor();
+  await button("Disconnect").click();
+  await button("Connect UPS").waitFor();
+  check(await page.evaluate(()=>window.upsTestPeer.closes)===1,"Port did not close cleanly");
+  await page.reload(); check(await refresh.inputValue()==="5","Refresh preference did not persist");
+  await page.setViewportSize({width:390,height:844});
+  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),"Narrow layout overflows horizontally");
+  check(!errors.length,errors.join("\n"));
+  return { firstIntervalMs:Math.round(observed.interval), updatedIntervalMs:Math.round(updated),
+    manualRead:true, validatedWrite:true, dualBoardText:true, cleanDisconnect:true, persistedRefresh:true, mobileLayout:true };
+}
